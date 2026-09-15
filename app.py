@@ -2,7 +2,11 @@ import streamlit as st
 from dotenv import load_dotenv
 
 from src.config import AppConfig
-from src.gemini_service import TalkShowGenerationError, TalkShowService
+from src.gemini_service import (
+    TalkShowGenerationError,
+    TalkShowRateLimitError,
+    TalkShowService,
+)
 from src.prompts import build_system_prompt
 
 
@@ -20,6 +24,8 @@ def initialize_state() -> None:
         st.session_state.messages = []
     if "config" not in st.session_state:
         st.session_state.config = AppConfig.from_environment()
+    if "rate_limit_retry" not in st.session_state:
+        st.session_state.rate_limit_retry = None
 
 
 def render_sidebar() -> tuple[str, str, list[str]]:
@@ -42,6 +48,7 @@ def render_sidebar() -> tuple[str, str, list[str]]:
 
         if st.button("대화 기록 초기화", use_container_width=True):
             st.session_state.messages = []
+            st.session_state.rate_limit_retry = None
             st.rerun()
 
     return topic, host, panels
@@ -63,14 +70,25 @@ def main() -> None:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
+    retry_clicked = False
+    if st.session_state.rate_limit_retry:
+        st.warning("Gemini 무료 API 사용량 제한에 도달했습니다. 잠시 후 다시 시도해주세요.")
+        retry_clicked = st.button("토론 다시 시도", type="primary")
+
     prompt = st.chat_input("토론 주제나 시청자 질문을 입력하세요")
-    if not prompt:
+    retry_request = st.session_state.rate_limit_retry if retry_clicked else None
+    if retry_request:
+        prompt = None
+        system_prompt = retry_request["system_prompt"]
+        request_messages = retry_request["messages"]
+    elif not prompt:
         if st.button("첫 질문 자동 생성", type="primary"):
             prompt = f"{topic}에 대해 시청자가 가장 궁금해할 질문을 시작해 주세요."
 
     if prompt:
         system_prompt = build_system_prompt(topic=topic, host=host, panels=panels)
         st.session_state.messages.append({"role": "user", "content": prompt})
+        request_messages = list(st.session_state.messages)
         with st.chat_message("user"):
             st.markdown(prompt)
 
@@ -79,14 +97,34 @@ def main() -> None:
                 try:
                     answer = service.generate_debate(
                         system_prompt=system_prompt,
-                        messages=st.session_state.messages,
+                        messages=request_messages,
                     )
+                except TalkShowRateLimitError as error:
+                    if error.partial_text:
+                        st.session_state.messages.append(
+                            {
+                                "role": "assistant",
+                                "content": error.partial_text,
+                                "partial": True,
+                            }
+                        )
+                        st.markdown(error.partial_text)
+                    st.session_state.rate_limit_retry = {
+                        "system_prompt": system_prompt,
+                        "messages": request_messages,
+                    }
+                    st.error("Gemini 무료 API 사용량 제한에 도달했습니다. 잠시 후 다시 시도해주세요.")
+                    return
                 except TalkShowGenerationError as error:
                     if error.partial_text:
                         st.markdown(error.partial_text)
                     st.error(str(error))
                     return
             st.markdown(answer)
+        st.session_state.rate_limit_retry = None
+        st.session_state.messages = [
+            message for message in st.session_state.messages if not message.get("partial")
+        ]
         st.session_state.messages.append({"role": "assistant", "content": answer})
 
 
