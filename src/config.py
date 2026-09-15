@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class AppConfig:
-    model: str = "gemini-3.6-flash"
+    base_url: str = "https://openrouter.ai/api/v1"
     api_key: str | None = None
     temperature: float = 0.8
 
@@ -15,7 +15,7 @@ class AppConfig:
     @classmethod
     def from_environment(cls) -> "AppConfig":
         return cls(
-            model=os.getenv("GEMINI_MODEL", "gemini-3.6-flash"),
-            api_key=os.getenv("GEMINI_API_KEY"),
-            temperature=float(os.getenv("GEMINI_TEMPERATURE", "0.8")),
+            base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
+            api_key=os.getenv("OPENROUTER_API_KEY"),
+            temperature=float(os.getenv("OPENROUTER_TEMPERATURE", "0.8")),
         )
